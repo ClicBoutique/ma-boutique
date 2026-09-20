@@ -1,12 +1,14 @@
 // ClicBoutique — fonction serveur (Vercel) : POST /api/generate  { niche, style }
 //
 // 1. Claude écrit la boutique (nom, textes, produits, descriptions, prix).
-// 2. Pexels fournit de vraies photos pour chaque produit (gratuit, usage commercial autorisé).
+// 2. Pexels (ou Pixabay) fournit de vraies photos pour chaque produit (gratuit, usage commercial autorisé).
 // 3. Le JSON renvoyé est celui que clicboutique.html sait afficher.
 //
 // Variables d'environnement à définir dans Vercel :
 //   ANTHROPIC_API_KEY  (obligatoire)  clé sur console.anthropic.com
-//   PEXELS_API_KEY     (recommandée)  clé gratuite sur pexels.com/api — sans elle, pas de photos
+//   PEXELS_API_KEY     (photos)       clé gratuite sur pexels.com/api
+//   PIXABAY_API_KEY    (photos)       alternative gratuite : pixabay.com/api/docs — utilisée si Pexels n'est pas configuré
+//                                     (sans aucune des deux clés, la boutique s'affiche avec des visuels de remplacement)
 //   ALLOWED_ORIGIN     (recommandée)  ex. https://ton-site.com — limite qui peut appeler la fonction
 //   CLAUDE_MODEL       (optionnelle)  défaut : claude-haiku-4-5-20251001 (rapide, tient dans les 30 s)
 
@@ -94,15 +96,29 @@ async function askClaude(niche, style) {
   return extractJson(text);
 }
 
-// Renvoie une URL de vraie photo (Pexels), en évitant de réutiliser deux fois la même
+// Renvoie une URL de vraie photo (Pexels, sinon Pixabay), en évitant de réutiliser deux fois la même
 async function findPhoto(query, orientation, used) {
-  if (!process.env.PEXELS_API_KEY || !query) return '';
+  if (!query) return '';
   try {
-    const url = 'https://api.pexels.com/v1/search?per_page=5&orientation=' + orientation + '&query=' + encodeURIComponent(query);
-    const r = await withTimeout(url, { headers: { Authorization: process.env.PEXELS_API_KEY } }, PEXELS_TIMEOUT_MS);
-    if (!r.ok) return '';
-    const j = await r.json();
-    const pick = (j.photos || []).map(p => p.src && p.src.large).find(u => u && !used.has(u));
+    let candidates = [];
+    if (process.env.PEXELS_API_KEY) {
+      const url = 'https://api.pexels.com/v1/search?per_page=5&orientation=' + orientation + '&query=' + encodeURIComponent(query);
+      const r = await withTimeout(url, { headers: { Authorization: process.env.PEXELS_API_KEY } }, PEXELS_TIMEOUT_MS);
+      if (!r.ok) return '';
+      const j = await r.json();
+      candidates = (j.photos || []).map(p => p.src && p.src.large);
+    } else if (process.env.PIXABAY_API_KEY) {
+      const url = 'https://pixabay.com/api/?key=' + encodeURIComponent(process.env.PIXABAY_API_KEY) +
+        '&image_type=photo&safesearch=true&per_page=5&orientation=' + (orientation === 'landscape' ? 'horizontal' : 'all') +
+        '&q=' + encodeURIComponent(query);
+      const r = await withTimeout(url, {}, PEXELS_TIMEOUT_MS);
+      if (!r.ok) return '';
+      const j = await r.json();
+      candidates = (j.hits || []).map(h => orientation === 'landscape' ? h.largeImageURL : h.webformatURL);
+    } else {
+      return '';
+    }
+    const pick = candidates.find(u => u && !used.has(u));
     if (pick) used.add(pick);
     return pick || '';
   } catch (e) { return ''; }
