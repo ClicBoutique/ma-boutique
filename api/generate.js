@@ -50,7 +50,7 @@ Schéma exact :
       "features": ["3 points forts courts et factuels"],
       "badge": "Best-seller | Nouveau | Promo | vide",
       "emoji": "1 emoji",
-      "image_query": "requête photo en anglais, 2-4 mots : le nom EXACT de l'objet tel qu'on le photographierait (ex : « football shin guards », « gold ring », « yoga mat »)"
+      "image_query": "requête photo en anglais, 2-4 mots : l'objet SEUL, isolé, sans personne, sans mise en situation, comme une photo produit de catalogue (ex : « football shin guards », « gold ring », « yoga mat »), jamais une action ou une personne (jamais « man playing football », « woman wearing »)"
     }
   ],
   "testimonials": [{ "author": "Prénom + initiale", "rating": 5, "text": "avis crédible de 1-2 phrases" }],
@@ -60,7 +60,7 @@ Schéma exact :
 Règles :
 - Exactement 8 produits, répartis en 2 ou 3 catégories.
 - TOUS les produits doivent appartenir directement à la niche demandée (ex. niche « protège tibia » : protège-tibias, chaussettes de maintien, sac de sport…), jamais un produit sans rapport.
-- Chaque image_query désigne l'objet lui-même (jamais un mot abstrait comme « protection », « sport » ou « quality ») et contient toujours le mot-clé de la niche ou le nom exact du produit.
+- Chaque image_query désigne l'objet lui-même (jamais un mot abstrait comme « protection », « sport » ou « quality ») et contient toujours le mot-clé de la niche ou le nom exact du produit. Décris toujours l'objet seul, jamais une personne en train de l'utiliser ou de le porter.
 - Prix réalistes en euros pour la niche ; « compare_price » = ancien prix barré (supérieur au prix) pour 2 produits maximum, sinon 0.
 - Exactement 3 testimonials et 3 trustPoints.
 - N'utilise AUCUNE marque existante, ni certification ou label (bio, CE, etc.), ni allégation de santé ou médicale.
@@ -124,30 +124,45 @@ async function searchPhotos(query, orientation) {
   return [];
 }
 
-// Score une photo par rapport aux mots de la requête, à partir de sa légende/ses tags (quand l'API les fournit).
-// Sans légende (Pexels y répond souvent par une chaîne vide), on garde la photo mais avec un score neutre :
+// Mots qui trahissent une photo « en situation » avec une personne plutôt qu'un objet seul :
+// on les pénalise dans le score pour privilégier les photos produit pur (fond neutre, objet seul).
+const PEOPLE_WORDS = ['man', 'woman', 'men', 'women', 'person', 'people', 'player', 'boy', 'girl',
+  'child', 'kid', 'model', 'holding', 'wearing', 'hand', 'hands', 'walking', 'running', 'standing', 'smiling'];
+
+// Score une photo par rapport aux mots de la requête, à partir de sa légende/ses tags (quand l'API les fournit),
+// en pénalisant les indices de présence humaine pour privilégier une vraie photo produit.
+// Sans légende (Pexels y répond souvent par une chaîne vide), on garde la photo avec un score neutre :
 // on préfère alors l'ordre de pertinence renvoyé par l'API plutôt que de la rejeter à tort.
 function scorePhoto(photo, words) {
   if (!photo.alt) return 0;
-  return words.reduce((n, w) => n + (photo.alt.includes(w) ? 1 : 0), 0);
+  const match = words.reduce((n, w) => n + (photo.alt.includes(w) ? 1 : 0), 0);
+  const penalty = PEOPLE_WORDS.reduce((n, w) => n + (photo.alt.includes(w) ? 1 : 0), 0);
+  return match - penalty * 2;
 }
 
 // Essaie plusieurs requêtes de la plus précise à la plus générale, sans réutiliser deux fois la même photo.
-// Pour chaque requête, choisit — parmi les résultats non déjà utilisés — celui dont la légende colle
-// le mieux aux mots-clés, au lieu de prendre systématiquement le tout premier résultat.
-async function findPhoto(queries, orientation, used) {
+// Renvoie jusqu'à `count` photos (pour une mini-galerie par produit), classées par pertinence décroissante ;
+// si une requête ne suffit pas à remplir la galerie, on complète avec la requête suivante, plus générale.
+async function findPhotos(queries, orientation, used, count) {
+  const picks = [];
   for (const q of queries.filter(Boolean)) {
+    if (picks.length >= count) break;
     try {
       const words = q.toLowerCase().split(/\s+/).filter(w => w.length > 2);
       const results = (await searchPhotos(q, orientation)).filter(p => p.url && !used.has(p.url));
-      if (!results.length) continue;
       results.sort((a, b) => scorePhoto(b, words) - scorePhoto(a, words));
-      const pick = results[0].url;
-      used.add(pick);
-      return pick;
+      for (const r of results) {
+        if (picks.length >= count) break;
+        used.add(r.url);
+        picks.push(r.url);
+      }
     } catch (e) { /* on essaie la requête suivante */ }
   }
-  return '';
+  return picks;
+}
+
+async function findPhoto(queries, orientation, used) {
+  return (await findPhotos(queries, orientation, used, 1))[0] || '';
 }
 
 // Garantit que la requête contient le mot-clé de la niche (évite les photos sans rapport)
@@ -184,17 +199,19 @@ module.exports = async function handler(req, res) {
     const list = (Array.isArray(raw.products) ? raw.products : []).filter(p => p && p.name).slice(0, 8);
     if (list.length < 3) throw new Error('Pas assez de produits');
 
-    // Photos en parallèle : 1 pour la bannière + 1 par produit
+    // Photos en parallèle : 1 bannière (paysage) + jusqu'à 4 photos par produit (mini-galerie)
     const used = new Set();
     const keyword = s(raw.niche_keyword, 40);
-    const [heroImage, ...images] = await Promise.all([
-      findPhoto([withKeyword(s(raw.hero_query, 60), keyword), keyword], 'landscape', used),
-      ...list.map(p => findPhoto([withKeyword(s(p.image_query, 60), keyword), keyword], 'square', used))
-    ]);
+    const heroPromise = findPhoto([withKeyword(s(raw.hero_query, 60), keyword), keyword], 'landscape', used);
+    const galleryPromises = list.map(p =>
+      findPhotos([withKeyword(s(p.image_query, 60), keyword) + ' product photo', withKeyword(s(p.image_query, 60), keyword), keyword], 'square', used, 4)
+    );
+    const [heroImage, ...galleries] = await Promise.all([heroPromise, ...galleryPromises]);
 
     const products = list.map((p, i) => {
       const price = Math.max(1, Number(p.price) || 19.9);
       const compare = Number(p.compare_price);
+      const gallery = galleries[i] || [];
       return {
         name: s(p.name, 90),
         price,
@@ -205,7 +222,8 @@ module.exports = async function handler(req, res) {
         rating: Math.round((4.4 + ((i * 7) % 6) / 10) * 10) / 10,   // exemples d'affichage, pas de vrais avis
         reviews: 24 + (i * 67) % 380,
         badge: ['Best-seller', 'Nouveau', 'Promo'].includes(p.badge) ? p.badge : '',
-        image: images[i] || '',
+        image: gallery[0] || '',
+        images: gallery,
         emoji: s(p.emoji, 4) || '🛍️'
       };
     });
