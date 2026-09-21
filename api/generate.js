@@ -200,8 +200,9 @@ async function getCJAccessToken() {
   }, CJ_TIMEOUT_MS);
   const j = await r.json().catch(() => null);
   if (!r.ok || !j || !j.result || !j.data || !j.data.accessToken) {
-    throw new Error('CJ auth échouée : ' + (j && j.message || r.status));
+    throw new Error('CJ auth échouée : HTTP ' + r.status + ' — ' + (j && (j.message || j.code) || 'réponse invalide'));
   }
+  console.log('CJ auth OK, token obtenu');
   cjTokenCache = {
     token: j.data.accessToken,
     // On se garde une marge : token valable 15 jours, on le garde en cache 12h max par sécurité.
@@ -218,8 +219,14 @@ async function searchCJProducts(keyword, count) {
     '&keyWord=' + encodeURIComponent(keyword);
   const r = await withTimeout(url, { headers: { 'CJ-Access-Token': token } }, CJ_TIMEOUT_MS);
   const j = await r.json().catch(() => null);
-  if (!r.ok || !j || !j.result) return [];
-  const list = (j.data && (j.data.list || j.data.content)) || [];
+  if (!r.ok || !j || !j.result) {
+    throw new Error('CJ product search échouée : HTTP ' + r.status + ' — ' + (j && (j.message || j.code) || 'réponse invalide'));
+  }
+  // La forme exacte de la réponse varie selon les comptes CJ (list / content / data direct) :
+  // on essaie les formes connues plutôt que de supposer une seule structure.
+  const d = j.data;
+  const list = Array.isArray(d) ? d : (d && (d.list || d.content || d.pageData || d.products)) || [];
+  console.log('CJ search "' + keyword + '" → ' + list.length + ' résultat(s) bruts');
   return list
     .filter(p => p && p.productImage && (p.sellPrice || p.productSellPrice) && p.pid)
     .slice(0, count)
@@ -313,6 +320,8 @@ module.exports = async function handler(req, res) {
             };
           });
           usedRealSupplier = true;
+        } else {
+          console.log('CJ : seulement ' + cjList.length + ' produit(s) valide(s) pour "' + (keyword || niche) + '" (3 minimum requis) — repli sur le mode précédent');
         }
       } catch (e) {
         console.error('CJ sourcing error (repli sur le mode précédent):', e && e.message);
@@ -369,6 +378,9 @@ module.exports = async function handler(req, res) {
       heroImage,
       products,
       realSupplier: usedRealSupplier,
+      sourcingNote: usedRealSupplier
+        ? 'Produits réels sourcés chez CJ Dropshipping.'
+        : 'Repli sur le mode précédent (IA + photos stock) — vérifie les logs Vercel pour la cause exacte si CJ_API_KEY est configurée.',
       testimonials: Array.isArray(raw.testimonials) ? raw.testimonials.slice(0, 3) : [],
       trustPoints: Array.isArray(raw.trustPoints) ? raw.trustPoints.slice(0, 3) : []
     });
