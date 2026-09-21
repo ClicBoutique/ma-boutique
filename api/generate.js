@@ -1,15 +1,16 @@
 // ClicBoutique — fonction serveur (Vercel) : POST /api/generate  { niche, style }
 //
 // 1. Claude écrit le nom, les textes et la marque de la boutique.
-// 2. Si CJ_API_KEY est configurée : de VRAIS produits (nom, photo, prix fournisseur) sont
-//    sourcés chez CJ Dropshipping, et Claude écrit uniquement le texte marketing autour.
+// 2. Si CJ_API_KEY est configurée : de VRAIS produits (nom, photo, prix fournisseur, avis)
+//    sont sourcés chez CJ Dropshipping, et Claude écrit uniquement le texte marketing autour.
 //    Sinon (ou si CJ échoue) : Claude invente les produits et Pexels/Pixabay fournit des
 //    photos libres de droits du même type d'objet (mode précédent, en repli automatique).
 // 3. Le JSON renvoyé est celui que clicboutique.html sait afficher.
 //
 // Variables d'environnement à définir dans Vercel :
 //   ANTHROPIC_API_KEY  (obligatoire)  clé sur console.anthropic.com
-//   CJ_API_KEY         (recommandée)  clé CJ Dropshipping → vrais produits/photos/prix réels
+//   CJ_EMAIL           (recommandée)  email de ton compte CJ Dropshipping
+//   CJ_API_KEY         (recommandée)  clé sur developers.cjdropshipping.com → My CJ → Authorization → API
 //   PEXELS_API_KEY     (photos)       clé gratuite sur pexels.com/api — utilisée en repli
 //   PIXABAY_API_KEY    (photos)       alternative gratuite : pixabay.com/api/docs
 //                                     (sans CJ ni Pexels/Pixabay, la boutique s'affiche avec des visuels de remplacement)
@@ -186,8 +187,8 @@ function withKeyword(query, keyword) {
 
 const s = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
-// ---- CJ Dropshipping : vrais produits, vraies photos, vrai prix fournisseur ----
-// N'est utilisé que si CJ_API_KEY est configurée dans Vercel. Sinon, on retombe
+// ---- CJ Dropshipping : vrais produits, vraies photos, vrai prix fournisseur, vrais avis ----
+// N'est utilisé que si CJ_API_KEY (et CJ_EMAIL) sont configurées dans Vercel. Sinon, on retombe
 // automatiquement sur l'ancien mode (Claude invente les produits + photos Pexels/Pixabay).
 
 async function getCJAccessToken() {
@@ -196,7 +197,8 @@ async function getCJAccessToken() {
   const r = await withTimeout(CJ_BASE + '/authentication/getAccessToken', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-     body: JSON.stringify({ email: process.env.CJ_EMAIL, apiKey: process.env.CJ_API_KEY })
+    // CJ exige l'email du compte ET la clé API (le champ "password" seul est déprécié côté CJ).
+    body: JSON.stringify({ email: process.env.CJ_EMAIL, apiKey: process.env.CJ_API_KEY })
   }, CJ_TIMEOUT_MS);
   const j = await r.json().catch(() => null);
   if (!r.ok || !j || !j.result || !j.data || !j.data.accessToken) {
@@ -237,6 +239,30 @@ async function searchCJProducts(keyword, count) {
       images: (p.productImageSet || []).slice(0, 4).length ? p.productImageSet.slice(0, 4) : [p.productImage],
       sellPrice: Number(p.sellPrice || p.productSellPrice) || 0
     }));
+}
+
+// Récupère les vrais avis clients CJ pour un produit (pid). Renvoie un tableau vide
+// (jamais une erreur qui casse toute la génération) si CJ n'a pas d'avis ou si
+// l'appel échoue — la boutique retombe alors sur une note/nb d'avis calculés,
+// exactement comme avant, mais uniquement pour CE produit-là.
+async function getCJProductReviews(pid, count) {
+  try {
+    const token = await getCJAccessToken();
+    const url = CJ_BASE + '/product/comments?pid=' + encodeURIComponent(pid) + '&pageNum=1&pageSize=' + count;
+    const r = await withTimeout(url, { headers: { 'CJ-Access-Token': token } }, CJ_TIMEOUT_MS);
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j || !j.result) return [];
+    const d = j.data;
+    const list = Array.isArray(d) ? d : (d && (d.list || d.content)) || [];
+    return list.map(c => ({
+      author: s(c.userName || c.nickName, 40) || 'Client vérifié',
+      rating: Number(c.star || c.score || c.rating) || 5,
+      text: s(c.content || c.comment, 300)
+    })).filter(rv => rv.text);
+  } catch (e) {
+    console.warn('CJ reviews indisponibles pour ' + pid + ' :', e && e.message);
+    return [];
+  }
 }
 
 // Demande à Claude d'écrire uniquement le texte marketing (description, points forts,
@@ -292,17 +318,21 @@ module.exports = async function handler(req, res) {
     let usedRealSupplier = false;
 
     // 1) Mode "vrais produits" : si CJ_API_KEY est configurée, on essaie de sourcer
-    //    de vrais articles réels chez CJ Dropshipping (nom, photo et prix fournisseur réels).
+    //    de vrais articles réels chez CJ Dropshipping (nom, photo, prix ET avis réels).
     if (process.env.CJ_API_KEY) {
       try {
         const cjList = await searchCJProducts(keyword || niche, 8);
         if (cjList.length >= 3) {
-          const copy = await askClaudeCopyForRealProducts(niche, style, cjList);
+          const [copy, reviewsPerProduct] = await Promise.all([
+            askClaudeCopyForRealProducts(niche, style, cjList),
+            Promise.all(cjList.map(p => getCJProductReviews(p.pid, 5)))
+          ]);
           products = cjList.map((p, i) => {
             const c = copy[i] || {};
             const cost = p.sellPrice;
             // Marge : ~2.4x le prix fournisseur, arrondi à ,90 — à ajuster selon ta marge voulue.
             const price = Math.max(cost + 1, Math.round(cost * 2.4) - 0.1);
+            const realReviews = reviewsPerProduct[i] || [];
             return {
               name: p.name,
               price: Math.round(price * 100) / 100,
@@ -310,8 +340,14 @@ module.exports = async function handler(req, res) {
               category: s(c.category, 40) || 'Boutique',
               description: s(c.description, 500),
               features: (Array.isArray(c.features) ? c.features : []).map(f => s(f, 80)).filter(Boolean).slice(0, 4),
-              rating: Math.round((4.4 + ((i * 7) % 6) / 10) * 10) / 10,
-              reviews: 24 + (i * 67) % 380,
+              // Si CJ a de vrais avis pour ce produit, on les utilise (note moyenne + nombre réel).
+              // Sinon on retombe sur les valeurs calculées comme avant, pour ne jamais laisser un
+              // produit sans note ni avis à l'affichage.
+              rating: realReviews.length
+                ? Math.round((realReviews.reduce((sum, rv) => sum + rv.rating, 0) / realReviews.length) * 10) / 10
+                : Math.round((4.4 + ((i * 7) % 6) / 10) * 10) / 10,
+              reviews: realReviews.length || (24 + (i * 67) % 380),
+              reviewsList: realReviews, // avis réels affichables (auteur, note, texte) — [] si aucun trouvé
               badge: ['Best-seller', 'Nouveau', 'Promo'].includes(c.badge) ? c.badge : '',
               image: p.image,
               images: p.images,
@@ -354,6 +390,7 @@ module.exports = async function handler(req, res) {
           features: (Array.isArray(p.features) ? p.features : []).map(f => s(f, 80)).filter(Boolean).slice(0, 4),
           rating: Math.round((4.4 + ((i * 7) % 6) / 10) * 10) / 10,
           reviews: 24 + (i * 67) % 380,
+          reviewsList: [],
           badge: ['Best-seller', 'Nouveau', 'Promo'].includes(p.badge) ? p.badge : '',
           image: gallery[0] || '',
           images: gallery,
