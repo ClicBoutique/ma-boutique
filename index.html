@@ -744,77 +744,79 @@
   function localShop(link){
     const host = hostLabel(link);
     const short = cap(host.split('.')[0] || 'Boutique');
-    const names = [short + ' Shop', 'Maison ' + short, short + ' Store'];
     const gen = (name, price, emoji, category, description, features) => ({ name, price, emoji, category, description, features });
-    const products = decorate([
-      gen('Produit principal — depuis ' + host, 29.9, '⭐', 'Best-sellers', 'Article repris depuis ton lien (' + host + ') : photos, description et avis seront ceux du produit d\'origine une fois la fonction serveur branchée.', ['Repris du lien fourni', 'Photos d\'origine', 'Avis d\'origine']),
-      gen('Best-seller complémentaire', 24.9, '🔥', 'Best-sellers', 'Un produit complémentaire généré par l\'IA pour compléter ta boutique.', ['Sélection IA', 'Bon rapport qualité-prix', 'Livraison rapide']),
-      gen('Nouveauté de la boutique', 19.9, '✨', 'Nouveautés', 'Un article assorti au produit principal, pour varier ton catalogue.', ['Nouvelle collection', 'Stock limité', 'Emballage soigné']),
-      gen('Pack découverte', 39, '📦', 'Coffrets', 'Un assortiment pour découvrir l\'univers de la boutique à prix avantageux.', ['Plusieurs articles', 'Prix avantageux', 'Idéal pour débuter'])
-    ]);
+    const products = decorate([gen('Produit principal — depuis ' + host, 29.9, '✦', 'Produit', 'Produit importé depuis le lien fournisseur.', ['Produit unique', 'Présentation premium', 'Galerie fournisseur'])]);
     return {
-      name: names[Math.floor(Math.random() * names.length)],
-      tagline: 'Boutique générée à partir d\'un lien ' + host + '.',
-      about: 'Cette boutique de démonstration a été construite à partir du lien produit que tu as collé (' + host + '). Une fois la fonction serveur /api/generate branchée, les vraies photos, la vraie description et les vrais avis du produit remplacent ce contenu de démonstration.',
-      philosophy: 'Un lien collé, une boutique complète : c\'est la promesse de ClicBoutique.',
-      heroKicker: 'Depuis ' + host, heroTitle: 'Ta boutique depuis ' + host, heroSubtitle: 'Les photos, la description et les avis viennent normalement du produit d\'origine.', heroImage: '', heroEmoji: '⭐',
-      categories: [...new Set(products.map(p => p.category))],
-      products, testimonials: DEFAULT_TESTI, trustPoints: DEFAULT_TRUST, sourcingNote: 'Mode démo : branche /api/generate pour récupérer les vraies données du lien.'
+      name: short + ' Store',
+      tagline: 'Une boutique mono-produit générée à partir de votre lien.',
+      about: 'Une présentation premium entièrement centrée sur le produit importé.',
+      philosophy: 'Un produit. Une expérience. Une boutique.',
+      heroKicker: 'Produit unique', heroTitle: products[0].name, heroSubtitle: 'Ajoutez un fournisseur accessible pour afficher ses vrais visuels.', heroImage: '', heroEmoji: '✦',
+      categories: ['Produit'], products, testimonials: [], trustPoints: DEFAULT_TRUST, sourcingNote: 'Aucune image source accessible depuis cette URL.'
     };
   }
 
 
   // Vérifie et nettoie la réponse d'une vraie IA (ou du serveur) avant de l'afficher
   function normalizeShop(d){
-    if (!d || typeof d.name !== 'string' || !Array.isArray(d.products)) return null;
+    if (!d || typeof d !== 'object') return null;
+    const source = d.shop && typeof d.shop === 'object' ? d.shop : d;
     const str = (v, max) => typeof v === 'string' ? v.trim().slice(0, max || 300) : '';
-    const url = v => typeof v === 'string' && /^https?:\/\//i.test(v) ? v : '';
+    const url = v => typeof v === 'string' && /^(?:https?:\/\/|\/api\/image\?url=)/i.test(v) ? v : '';
     const num = (v, def) => Number.isFinite(Number(v)) ? Number(v) : def;
 
-    const products = d.products.filter(p => p && typeof p.name === 'string').slice(0, 12).map(p => {
-      const price = Math.max(0, num(p.price, 0));
-      const compare = num(p.comparePrice, 0);
-      return {
-        name: str(p.name, 90), price,
-        comparePrice: compare > price ? compare : 0,
-        category: str(p.category, 40) || 'Boutique',
-        description: str(p.description, 500),
-        features: Array.isArray(p.features) ? p.features.map(f => str(f, 80)).filter(Boolean).slice(0, 4) : [],
-        rating: Math.min(5, Math.max(1, num(p.rating, 4.6))),
-        reviews: Math.max(0, Math.round(num(p.reviews, 0))),
-        badge: str(p.badge, 14),
-        image: url(p.image),
-        images: Array.isArray(p.images) ? p.images.map(url).filter(Boolean).slice(0, 16) : [],
-        sourceUrl: url(p.sourceUrl || p.supplierUrl),
-        sourceImages: Array.isArray(p.sourceImages) ? p.sourceImages.map(url).filter(Boolean).slice(0, 24) : [],
-        emoji: str(p.emoji, 4) || '🛍️'
-      };
-    });
-    if (products.length < 3) return null;
+    // Toujours un seul article : accepter product ou products[0].
+    const rawProduct = source.product && typeof source.product === 'object'
+      ? source.product
+      : (Array.isArray(source.products) ? source.products[0] : null);
+    if (!rawProduct || typeof rawProduct.name !== 'string') return null;
 
-    const testimonials = Array.isArray(d.testimonials)
-      ? d.testimonials.filter(t => t && typeof t.text === 'string').slice(0, 3).map(t => ({ author: str(t.author, 40) || 'Client vérifié', text: str(t.text, 220), rating: Math.min(5, Math.max(1, num(t.rating, 5))) }))
+    const p = rawProduct;
+    const images = Array.isArray(p.images) ? p.images.map(url).filter(Boolean).slice(0, 24) : [];
+    const sourceImages = Array.isArray(p.sourceImages) ? p.sourceImages.map(url).filter(Boolean).slice(0, 40) : [];
+    const mergedImages = [...images, ...sourceImages].filter((v,i,a)=>a.indexOf(v)===i).slice(0,24);
+    const product = {
+      name: str(p.name, 120),
+      price: Math.max(0, num(p.price, 0)),
+      comparePrice: num(p.comparePrice, 0) > num(p.price, 0) ? num(p.comparePrice, 0) : 0,
+      category: str(p.category, 40) || 'Produit',
+      description: str(p.description, 800),
+      features: Array.isArray(p.features) ? p.features.map(f => typeof f === 'object' ? str(f.title || f.text, 100) : str(f, 100)).filter(Boolean).slice(0, 6) : [],
+      rating: Math.min(5, Math.max(1, num(p.rating, 4.7))),
+      reviews: Math.max(0, Math.round(num(p.reviews, 0))),
+      badge: str(p.badge, 20),
+      image: url(p.image) || mergedImages[0] || '',
+      images: mergedImages.length ? mergedImages : (url(p.image) ? [url(p.image)] : []),
+      sourceUrl: url(p.sourceUrl || p.supplierUrl || source.sourceUrl),
+      sourceImages: sourceImages.length ? sourceImages : mergedImages,
+      emoji: str(p.emoji, 4) || '✦',
+      realSupplier: p.realSupplier === true || mergedImages.length > 0
+    };
+
+    const testimonials = Array.isArray(source.testimonials)
+      ? source.testimonials.filter(t => t && typeof t.text === 'string').slice(0, 3).map(t => ({ author: str(t.author, 40) || 'Client', text: str(t.text, 220), rating: Math.min(5, Math.max(1, num(t.rating, 5))) }))
       : [];
-    const trust = Array.isArray(d.trustPoints)
-      ? d.trustPoints.filter(t => t && typeof t.title === 'string').slice(0, 3).map(t => ({ title: str(t.title, 40), text: str(t.text, 60) }))
+    const trust = Array.isArray(source.trustPoints)
+      ? source.trustPoints.filter(t => t && typeof t.title === 'string').slice(0, 3).map(t => ({ title: str(t.title, 40), text: str(t.text, 80) }))
       : [];
-    const name = str(d.name, 60) || 'Ma Boutique';
+    const name = str(source.name || source.brand, 60) || 'Ma Boutique';
+    const heroImage = url(source.heroImage) || product.image || product.images[0] || product.sourceImages[0] || '';
     return {
       name,
-      tagline: str(d.tagline, 140),
-      about: str(d.about, 600),
-      philosophy: str(d.philosophy, 160) || str(d.tagline, 140),
-      heroKicker: str(d.heroKicker, 40) || 'Nouvelle collection',
-      heroTitle: str(d.heroTitle, 90) || name,
-      heroSubtitle: str(d.heroSubtitle, 200) || str(d.tagline, 140),
-      heroImage: url(d.heroImage),
-      sourceUrl: url(d.sourceUrl || d.supplierUrl),
-      sourceImages: Array.isArray(d.sourceImages) ? d.sourceImages.map(url).filter(Boolean).slice(0, 40) : [],
-      heroEmoji: products[0].emoji,
-      categories: [...new Set(products.map(p => p.category))].slice(0, 5),
-      products,
-      realSupplier: d.realSupplier === true,
-      sourcingNote: str(d.sourcingNote, 300),
+      tagline: str(source.tagline || source.announcement, 140),
+      about: str(source.about, 700),
+      philosophy: str(source.philosophy, 180) || str(source.tagline || source.announcement, 140),
+      heroKicker: str(source.heroKicker, 50) || 'Produit unique',
+      heroTitle: str(source.heroTitle, 100) || product.name,
+      heroSubtitle: str(source.heroSubtitle, 220) || str(source.about || source.tagline || source.announcement, 220),
+      heroImage,
+      sourceUrl: url(source.sourceUrl || source.productUrl),
+      sourceImages: Array.isArray(source.sourceImages) ? source.sourceImages.map(url).filter(Boolean).slice(0, 40) : product.sourceImages,
+      heroEmoji: product.emoji,
+      categories: ['Produit'],
+      products: [product],
+      realSupplier: source.realSupplier === true || product.realSupplier,
+      sourcingNote: str(source.sourcingNote, 300),
       testimonials: testimonials.length ? testimonials : DEFAULT_TESTI,
       trustPoints: trust.length ? trust : DEFAULT_TRUST
     };
@@ -1019,6 +1021,8 @@ footer a{display:block;padding:3px 0;cursor:pointer}footer a:hover{color:var(--f
 .toast.on{opacity:1;transform:translate(-50%,0)}
 @media(max-width:760px){.story-in{grid-template-columns:1fr}.story-visual{aspect-ratio:16/9}}
 @media(max-width:560px){.hero{grid-template-columns:1fr;padding:36px 18px 40px}.hero-img{order:-1}nav{display:none}.block{padding:40px 18px}.story{margin:0 12px;padding:40px 6px}.story-in{padding:0 16px}.newsletter{margin:0 12px 40px;padding:36px 18px}footer{grid-template-columns:1fr 1fr}footer>div:first-child{grid-column:1/-1}.sheet{grid-template-columns:1fr}.sheet .ph{aspect-ratio:5/4}.sheet-body{padding:20px}}
+
+.single-product .chips{display:none}.single-product .grid{grid-template-columns:minmax(0,760px);justify-content:center}.single-product .card{max-width:760px;margin:0 auto}.single-product .card .ph{aspect-ratio:1/1}.single-product .card .card-body{padding:22px}.single-product .card h3{font-family:var(--serif);font-size:1.45rem;letter-spacing:-.02em}.single-product .card .price{font-size:1.25rem}.single-product .card .add{padding:13px 16px;font-size:.9rem;background:var(--accent);color:var(--accent-fg)}.single-product .block-head{align-items:end}
 </style></head><body data-layout="__LAYOUT__">
 <div class="promo" id="promo"></div>
 <header>
@@ -1032,7 +1036,7 @@ footer a{display:block;padding:3px 0;cursor:pointer}footer a:hover{color:var(--f
     <h1 id="heroTitle"></h1>
     <p class="lead" id="heroSub"></p>
     <div class="hero-cta">
-      <button class="btn" id="heroCta" type="button">Découvrir la collection</button>
+      <button class="btn" id="heroCta" type="button">Découvrir le produit</button>
       <a class="btn-ghost" id="heroSecondary">Notre histoire →</a>
     </div>
     <div class="social-proof">
@@ -1051,7 +1055,7 @@ footer a{display:block;padding:3px 0;cursor:pointer}footer a:hover{color:var(--f
   <div class="story-in">
     <div>
       <span class="quote-mark">"</span>
-      <h2 id="storyTitle">Notre histoire</h2>
+      <h2 id="storyTitle">Une boutique dédiée à cet article</h2>
       <p class="philosophy" id="philosophyText"></p>
       <p class="body-text" id="aboutText"></p>
     </div>
@@ -1059,16 +1063,16 @@ footer a{display:block;padding:3px 0;cursor:pointer}footer a:hover{color:var(--f
   </div>
 </section>
 <section class="block how reveal">
-  <div class="block-head"><h2>Comment ça marche</h2></div>
+  <div class="block-head"><h2>Pourquoi cet article</h2></div>
   <div class="steps">
-    <div class="step"><h3>Choisissez</h3><p>Parcourez la sélection et trouvez l'article qui vous correspond.</p></div>
-    <div class="step"><h3>Commandez</h3><p>Paiement sécurisé, confirmation immédiate par e-mail.</p></div>
-    <div class="step"><h3>Recevez</h3><p>Expédition rapide et suivi de commande à chaque étape.</p></div>
+    <div class="step"><h3>Visuels authentiques</h3><p>La galerie utilise en priorité les photos récupérées sur la fiche fournisseur.</p></div>
+    <div class="step"><h3>Une fiche unique</h3><p>Aucun catalogue artificiel : toute la page est construite autour de cet article.</p></div>
+    <div class="step"><h3>Commande directe</h3><p>Le prix, les détails et le bouton d’achat restent concentrés sur le produit.</p></div>
   </div>
 </section>
-<section class="block reveal" id="produits"><div class="block-head"><h2>Nos produits</h2><div class="chips" id="chips"></div></div><div class="grid" id="grid"></div></section>
-<section class="media-showcase reveal" id="mediaShowcase"><div class="media-head"><div><span class="eyebrow">Visuels authentiques</span><h2>Le produit, sous tous ses angles.</h2><p>La galerie met en avant les visuels disponibles sur la fiche source, sans les remplacer par des images génériques.</p></div><div class="media-count" id="mediaCount"></div></div><div class="media-wall" id="mediaWall"></div></section>
-<section class="conversion-grid reveal"><div class="conversion-card"><span>01</span><h3>Présentation claire</h3><p>Les informations essentielles sont hiérarchisées pour une lecture rapide sur mobile comme sur ordinateur.</p></div><div class="conversion-card"><span>02</span><h3>Galerie immersive</h3><p>Grande image, miniatures, navigation et aperçu plein écran pour exploiter les visuels disponibles.</p></div><div class="conversion-card"><span>03</span><h3>Parcours fluide</h3><p>Navigation sticky, filtres, panier et appels à l’action restent accessibles sans casser l’expérience.</p></div></section>
+<section class="block reveal single-product" id="produits"><div class="block-head"><div><span class="eyebrow">Produit unique</span><h2>Le produit</h2></div><div class="chips" id="chips"></div></div><div class="grid" id="grid"></div></section>
+<section class="media-showcase reveal" id="mediaShowcase"><div class="media-head"><div><span class="eyebrow">Visuels authentiques</span><h2>Le produit, sous tous ses angles.</h2><p>La galerie utilise en priorité les vrais visuels récupérés sur la fiche fournisseur, sans créer de faux produits.</p></div><div class="media-count" id="mediaCount"></div></div><div class="media-wall" id="mediaWall"></div></section>
+<section class="conversion-grid reveal"><div class="conversion-card"><span>01</span><h3>Un seul article</h3><p>Tout le design est concentré sur le produit importé depuis ton lien fournisseur.</p></div><div class="conversion-card"><span>02</span><h3>Photos réelles</h3><p>Les images trouvées sur la page source sont conservées dans la galerie et dans le hero.</p></div><div class="conversion-card"><span>03</span><h3>Expérience premium</h3><p>Une présentation éditoriale, immersive et responsive pensée pour mettre ce produit en valeur.</p></div></section>
 <section class="block reveal" id="avis" hidden><div class="block-head"><h2>Ils nous font confiance</h2></div><div class="reviews" id="reviews"></div></section>
 <section class="newsletter reveal">
   <span class="eyebrow" style="justify-content:center">Restez informé</span>
@@ -1177,21 +1181,12 @@ D.trustPoints.slice(0, 3).forEach(function(t, i){
 });
 
 var cat = 'Tous';
-function setCat(c){
-  cat = c;
-  [].forEach.call($('chips').children, function(b){ b.classList.toggle('on', b.textContent === c); });
-  renderGrid();
-}
-['Tous'].concat(D.categories).forEach(function(c){
-  var b = el('button', 'chip' + (c === 'Tous' ? ' on' : ''), c); b.type = 'button';
-  b.onclick = function(){ setCat(c); }; $('chips').appendChild(b);
-});
-D.categories.slice(0, 3).forEach(function(c){
-  var a = el('a', null, c); a.onclick = function(){ setCat(c); $('produits').scrollIntoView(); }; $('nav').appendChild(a);
-  var f = el('a', null, c); f.onclick = a.onclick; $('fCats').appendChild(f);
-});
-var apropos = el('a', null, 'À propos'); apropos.onclick = function(){ $('apropos').scrollIntoView(); }; $('nav').appendChild(apropos);
-$('heroCta').onclick = function(){ $('produits').scrollIntoView(); };
+function setCat(){ cat = 'Tous'; renderGrid(); }
+var productNav = el('a', null, 'Le produit'); productNav.onclick = function(){ $('produits').scrollIntoView({behavior:'smooth'}); }; $('nav').appendChild(productNav);
+var mediaNav = el('a', null, 'Galerie'); mediaNav.onclick = function(){ $('mediaShowcase').scrollIntoView({behavior:'smooth'}); }; $('nav').appendChild(mediaNav);
+var apropos = el('a', null, 'À propos'); apropos.onclick = function(){ $('apropos').scrollIntoView({behavior:'smooth'}); }; $('nav').appendChild(apropos);
+var fProduct = el('a', null, 'Le produit'); fProduct.onclick = productNav.onclick; $('fCats').appendChild(fProduct);
+$('heroCta').onclick = function(){ $('produits').scrollIntoView({behavior:'smooth'}); };
 $('nlForm').onsubmit = function(e){ e.preventDefault(); toast('Merci, vous êtes inscrit(e) !'); this.reset(); };
 
 var count = 0, toastTimer;
@@ -1208,7 +1203,7 @@ function productImages(p){
 function renderGrid(){
   var g = $('grid'); g.textContent = '';
   var shown = [];
-  D.products.forEach(function(p, i){
+  D.products.slice(0,1).forEach(function(p, i){
     if (cat !== 'Tous' && p.category !== cat) return;
     var imgs = productImages(p);
     var card = el('article', 'card'), ph = el('div', 'ph');
