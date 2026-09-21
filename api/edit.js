@@ -29,7 +29,7 @@ Opérations possibles (« ops ») :
 - {"op":"theme","value":"mini|color|lux"}                     style général (minimaliste, coloré, luxe)
 - {"op":"colors","accent":"#rrggbb","bg":"#rrggbb","fg":"#rrggbb"}   couleurs personnalisées (toutes les clés sont facultatives ; accent = boutons, badges, liens ; bg = fond ; fg = texte)
 - {"op":"colors","reset":true}                                retour aux couleurs du style
-- {"op":"text","field":"name|tagline|about|heroTitle|heroSubtitle|promoText","value":"..."}
+- {"op":"text","field":"name|tagline|about|philosophy|heroKicker|heroTitle|heroSubtitle|promoText","value":"..."}
 - {"op":"banner","value":true|false}                          bandeau promo en haut (le texte se change avec field promoText)
 - {"op":"testimonials","value":true|false}                    section avis clients
 - {"op":"product_update","index":0,"fields":{"name","price","comparePrice","category","description","features":[...],"badge","emoji"}}
@@ -108,6 +108,7 @@ module.exports = async function handler(req, res) {
   // état de la boutique, compacté pour rester rapide
   const state = {
     name: s(shop.name, 60), tagline: s(shop.tagline, 140), about: s(shop.about, 300),
+    philosophy: s(shop.philosophy, 160), heroKicker: s(shop.heroKicker, 40),
     heroTitle: s(shop.heroTitle, 90), heroSubtitle: s(shop.heroSubtitle, 200), promoText: s(shop.promoText, 100),
     style: s(shop.theme, 10), customColors: shop.colors || null, bannerVisible: !!(shop.opts && shop.opts.banner), testimonialsVisible: !!(shop.opts && shop.opts.testi),
     products: shop.products.slice(0, 12).map((p, i) => ({

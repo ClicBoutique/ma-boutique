@@ -33,7 +33,9 @@ Schéma exact :
 {
   "name": "nom de boutique court et mémorable (2-3 mots, sans marque existante)",
   "tagline": "slogan de 6 à 12 mots",
-  "about": "présentation de la boutique, 2 phrases",
+  "heroKicker": "très courte accroche pour un badge au-dessus du titre, 2-4 mots (ex : « Édition automne », « Fait pour durer »)",
+  "philosophy": "une phrase de marque forte et inspirante, 10-16 mots, ton éditorial (pas un simple résumé du tagline)",
+  "about": "présentation de la boutique, 2 à 3 phrases, chaleureuses et concrètes",
   "heroTitle": "titre accrocheur de 4 à 8 mots",
   "heroSubtitle": "1 phrase de 12 à 20 mots",
   "niche_keyword": "le produit principal de la niche, en anglais, 1 à 3 mots (ex : « shin guards », « wooden lamp », « dog harness »)",
@@ -99,33 +101,50 @@ async function askClaude(niche, style) {
   return extractJson(text);
 }
 
-// Cherche des photos (Pexels, sinon Pixabay) pour UNE requête
+// Cherche des photos (Pexels, sinon Pixabay) pour UNE requête.
+// Renvoie { url, alt } pour permettre de vérifier que la photo correspond vraiment à la requête
+// (Pexels/Pixabay renvoient parfois des résultats approximatifs pour une requête précise).
 async function searchPhotos(query, orientation) {
   if (process.env.PEXELS_API_KEY) {
-    const url = 'https://api.pexels.com/v1/search?per_page=10&orientation=' + orientation + '&query=' + encodeURIComponent(query);
+    const url = 'https://api.pexels.com/v1/search?per_page=15&orientation=' + orientation + '&query=' + encodeURIComponent(query);
     const r = await withTimeout(url, { headers: { Authorization: process.env.PEXELS_API_KEY } }, PEXELS_TIMEOUT_MS);
     if (!r.ok) return [];
     const j = await r.json();
-    return (j.photos || []).map(p => p.src && p.src.large);
+    return (j.photos || []).map(p => ({ url: p.src && p.src.large, alt: (p.alt || '').toLowerCase() }));
   }
   if (process.env.PIXABAY_API_KEY) {
     const url = 'https://pixabay.com/api/?key=' + encodeURIComponent(process.env.PIXABAY_API_KEY) +
-      '&image_type=photo&safesearch=true&per_page=10&orientation=' + (orientation === 'landscape' ? 'horizontal' : 'all') +
+      '&image_type=photo&safesearch=true&per_page=15&orientation=' + (orientation === 'landscape' ? 'horizontal' : 'all') +
       '&q=' + encodeURIComponent(query);
     const r = await withTimeout(url, {}, PEXELS_TIMEOUT_MS);
     if (!r.ok) return [];
     const j = await r.json();
-    return (j.hits || []).map(h => orientation === 'landscape' ? h.largeImageURL : h.webformatURL);
+    return (j.hits || []).map(h => ({ url: orientation === 'landscape' ? h.largeImageURL : h.webformatURL, alt: (h.tags || '').toLowerCase() }));
   }
   return [];
 }
 
-// Essaie plusieurs requêtes de la plus précise à la plus générale, sans réutiliser deux fois la même photo
+// Score une photo par rapport aux mots de la requête, à partir de sa légende/ses tags (quand l'API les fournit).
+// Sans légende (Pexels y répond souvent par une chaîne vide), on garde la photo mais avec un score neutre :
+// on préfère alors l'ordre de pertinence renvoyé par l'API plutôt que de la rejeter à tort.
+function scorePhoto(photo, words) {
+  if (!photo.alt) return 0;
+  return words.reduce((n, w) => n + (photo.alt.includes(w) ? 1 : 0), 0);
+}
+
+// Essaie plusieurs requêtes de la plus précise à la plus générale, sans réutiliser deux fois la même photo.
+// Pour chaque requête, choisit — parmi les résultats non déjà utilisés — celui dont la légende colle
+// le mieux aux mots-clés, au lieu de prendre systématiquement le tout premier résultat.
 async function findPhoto(queries, orientation, used) {
   for (const q of queries.filter(Boolean)) {
     try {
-      const pick = (await searchPhotos(q, orientation)).find(u => u && !used.has(u));
-      if (pick) { used.add(pick); return pick; }
+      const words = q.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+      const results = (await searchPhotos(q, orientation)).filter(p => p.url && !used.has(p.url));
+      if (!results.length) continue;
+      results.sort((a, b) => scorePhoto(b, words) - scorePhoto(a, words));
+      const pick = results[0].url;
+      used.add(pick);
+      return pick;
     } catch (e) { /* on essaie la requête suivante */ }
   }
   return '';
@@ -194,6 +213,8 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({
       name: s(raw.name, 60),
       tagline: s(raw.tagline, 140),
+      heroKicker: s(raw.heroKicker, 40),
+      philosophy: s(raw.philosophy, 160),
       about: s(raw.about, 600),
       heroTitle: s(raw.heroTitle, 90),
       heroSubtitle: s(raw.heroSubtitle, 200),
