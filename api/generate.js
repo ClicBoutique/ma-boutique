@@ -115,14 +115,32 @@ module.exports=async function(req,res){
      const html=await r.text();
      const title=(html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i)||html.match(/<title[^>]*>([^<]+)/i)||[])[1]||'';
      page.title=s(decode(title).replace(/\s+/g,' '),140);
-     page.images=extractImages(html,productUrl);
+     shop.product.images=proxyImages(all);
    }
  }catch{}
  const originalImages=page.images.slice(0,40);
  const promptImages=originalImages;
- const system=`Tu es le directeur artistique d'une boutique e-commerce mono-produit premium. Réponds UNIQUEMENT avec JSON valide, sans markdown.
-Schéma: {"brand":"...","announcement":"...","cta":"Acheter maintenant","about":"...","philosophy":"...","product":{"name":"...","price":0,"comparePrice":0,"kicker":"...","badge":"...","description":"...","features":[{"title":"...","text":"..."}],"reviews":[],"images":[]},"trust":[{"title":"...","text":"..."}]}
-Style: ${style}. Un seul produit. N'invente ni marque, certification, garantie, résultat médical ou caractéristique non fournie. Les avis non vérifiés doivent rester vides. Les images doivent être conservées.`;
+ const system=`Tu es le directeur artistique d'une boutique e-commerce mono-produit premium.
+
+Réponds UNIQUEMENT avec du JSON valide.
+
+RÈGLE ABSOLUE POUR LES IMAGES :
+- Les images fournies dans "Images récupérées" sont les vraies images du fournisseur.
+- Tu DOIS les conserver.
+- Tu ne dois JAMAIS inventer d'URL d'image.
+- Tu ne dois JAMAIS remplacer une image fournisseur par une image générique.
+- Tu dois utiliser les images récupérées comme galerie officielle du produit.
+- Toutes les images récupérées doivent être conservées dans product.images dans le même ordre.
+- Si plusieurs images sont disponibles, conserve-les toutes.
+- Le premier élément doit être l'image principale.
+
+Schéma:
+{"brand":"...","announcement":"...","cta":"Acheter maintenant","about":"...","philosophy":"...","product":{"name":"...","price":0,"comparePrice":0,"kicker":"...","badge":"...","description":"...","features":[{"title":"...","text":"..."}],"reviews":[],"images":[]},"trust":[{"title":"...","text":"..."}]}
+
+Style: ${style}.
+Un seul produit.
+N'invente ni marque, certification, garantie, résultat médical ou caractéristique non fournie.
+Les avis non vérifiés doivent rester vides.`;
  try{
    const ar=await withTimeout('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json'},body:JSON.stringify({model:MODEL,max_tokens:2200,system,messages:[{role:'user',content:`URL: ${productUrl}\nTitre: ${page.title}\nImages récupérées: ${JSON.stringify(promptImages)}\nCrée la boutique.`}]} )},18000);
    const raw=await ar.text();
