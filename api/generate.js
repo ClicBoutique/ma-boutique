@@ -1,20 +1,30 @@
 // ClicBoutique — fonction serveur (Vercel) : POST /api/generate  { niche, style }
 //
-// 1. Claude écrit la boutique (nom, textes, produits, descriptions, prix).
-// 2. Pexels (ou Pixabay) fournit de vraies photos pour chaque produit (gratuit, usage commercial autorisé).
+// 1. Claude écrit le nom, les textes et la marque de la boutique.
+// 2. Si CJ_API_KEY est configurée : de VRAIS produits (nom, photo, prix fournisseur) sont
+//    sourcés chez CJ Dropshipping, et Claude écrit uniquement le texte marketing autour.
+//    Sinon (ou si CJ échoue) : Claude invente les produits et Pexels/Pixabay fournit des
+//    photos libres de droits du même type d'objet (mode précédent, en repli automatique).
 // 3. Le JSON renvoyé est celui que clicboutique.html sait afficher.
 //
 // Variables d'environnement à définir dans Vercel :
 //   ANTHROPIC_API_KEY  (obligatoire)  clé sur console.anthropic.com
-//   PEXELS_API_KEY     (photos)       clé gratuite sur pexels.com/api
-//   PIXABAY_API_KEY    (photos)       alternative gratuite : pixabay.com/api/docs — utilisée si Pexels n'est pas configuré
-//                                     (sans aucune des deux clés, la boutique s'affiche avec des visuels de remplacement)
+//   CJ_API_KEY         (recommandée)  clé CJ Dropshipping → vrais produits/photos/prix réels
+//   PEXELS_API_KEY     (photos)       clé gratuite sur pexels.com/api — utilisée en repli
+//   PIXABAY_API_KEY    (photos)       alternative gratuite : pixabay.com/api/docs
+//                                     (sans CJ ni Pexels/Pixabay, la boutique s'affiche avec des visuels de remplacement)
 //   ALLOWED_ORIGIN     (recommandée)  ex. https://ton-site.com — limite qui peut appeler la fonction
 //   CLAUDE_MODEL       (optionnelle)  défaut : claude-haiku-4-5-20251001 (rapide, tient dans les 30 s)
 
 const MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001';
 const CLAUDE_TIMEOUT_MS = 24000;
 const PEXELS_TIMEOUT_MS = 6000;
+const CJ_TIMEOUT_MS = 8000;
+const CJ_BASE = 'https://developers.cjdropshipping.com/api2.0/v1';
+
+// Jeton CJ mis en cache en mémoire (par instance serveur) : évite de redemander
+// un token à chaque génération (CJ limite l'appel getAccessToken à 1 fois/5 min).
+let cjTokenCache = { token: '', expiresAt: 0 };
 
 // Anti-abus simple (en mémoire, par instance) : 6 boutiques / 10 min / adresse IP.
 const hits = new Map();
@@ -176,6 +186,80 @@ function withKeyword(query, keyword) {
 
 const s = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
+// ---- CJ Dropshipping : vrais produits, vraies photos, vrai prix fournisseur ----
+// N'est utilisé que si CJ_API_KEY est configurée dans Vercel. Sinon, on retombe
+// automatiquement sur l'ancien mode (Claude invente les produits + photos Pexels/Pixabay).
+
+async function getCJAccessToken() {
+  const now = Date.now();
+  if (cjTokenCache.token && cjTokenCache.expiresAt > now + 60000) return cjTokenCache.token;
+  const r = await withTimeout(CJ_BASE + '/authentication/getAccessToken', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apiKey: process.env.CJ_API_KEY })
+  }, CJ_TIMEOUT_MS);
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j || !j.result || !j.data || !j.data.accessToken) {
+    throw new Error('CJ auth échouée : ' + (j && j.message || r.status));
+  }
+  cjTokenCache = {
+    token: j.data.accessToken,
+    // On se garde une marge : token valable 15 jours, on le garde en cache 12h max par sécurité.
+    expiresAt: now + 12 * 60 * 60 * 1000
+  };
+  return cjTokenCache.token;
+}
+
+// Cherche jusqu'à `count` produits réels chez CJ pour un mot-clé donné.
+// Renvoie { pid, name, image, images, sellPrice } — tout vient réellement du catalogue CJ.
+async function searchCJProducts(keyword, count) {
+  const token = await getCJAccessToken();
+  const url = CJ_BASE + '/product/listV2?page=1&size=' + Math.min(40, count * 5) +
+    '&keyWord=' + encodeURIComponent(keyword);
+  const r = await withTimeout(url, { headers: { 'CJ-Access-Token': token } }, CJ_TIMEOUT_MS);
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j || !j.result) return [];
+  const list = (j.data && (j.data.list || j.data.content)) || [];
+  return list
+    .filter(p => p && p.productImage && (p.sellPrice || p.productSellPrice) && p.pid)
+    .slice(0, count)
+    .map(p => ({
+      pid: p.pid,
+      name: s(p.productNameEn || p.productName, 90),
+      image: p.productImage,
+      images: (p.productImageSet || []).slice(0, 4).length ? p.productImageSet.slice(0, 4) : [p.productImage],
+      sellPrice: Number(p.sellPrice || p.productSellPrice) || 0
+    }));
+}
+
+// Demande à Claude d'écrire uniquement le texte marketing (description, points forts,
+// catégorie, badge) pour de VRAIS produits déjà trouvés chez CJ — jamais le nom, jamais le prix,
+// jamais la photo : ceux-là restent exactement ceux du fournisseur.
+async function askClaudeCopyForRealProducts(niche, style, cjProducts) {
+  const sys = `Tu es un expert e-commerce francophone. On te donne une liste de VRAIS produits réels (nom déjà fixé).
+Pour CHACUN, écris uniquement : une catégorie courte (parmi 2-3 au total), une description vendeuse de 2 phrases,
+3 points forts courts, un badge parmi "Best-seller"|"Nouveau"|"Promo"|"" et 1 emoji.
+Réponds UNIQUEMENT avec un tableau JSON, un objet par produit, dans le MÊME ORDRE que la liste reçue :
+[{"category":"...","description":"...","features":["...","...","..."],"badge":"...","emoji":"..."}]
+Aucun texte autour, aucune balise markdown. N'invente ni nom, ni prix, ni certification/allégation santé.`;
+  const userMsg = `Niche : ${niche}\nStyle : ${style}\nProduits (nom réel, ne pas modifier) :\n` +
+    cjProducts.map((p, i) => (i + 1) + '. ' + p.name).join('\n');
+  const r = await withTimeout('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({ model: MODEL, max_tokens: 2000, system: sys, messages: [{ role: 'user', content: userMsg }] })
+  }, CLAUDE_TIMEOUT_MS);
+  const data = await r.json();
+  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  const a = text.indexOf('['), b = text.lastIndexOf(']');
+  if (a < 0 || b <= a) throw new Error('Copie IA sans JSON');
+  return JSON.parse(text.slice(a, b + 1));
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.ALLOWED_ORIGIN || '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -196,37 +280,83 @@ module.exports = async function handler(req, res) {
 
   try {
     const raw = await askClaude(niche, style);
-    const list = (Array.isArray(raw.products) ? raw.products : []).filter(p => p && p.name).slice(0, 8);
-    if (list.length < 3) throw new Error('Pas assez de produits');
-
-    // Photos en parallèle : 1 bannière (paysage) + jusqu'à 4 photos par produit (mini-galerie)
-    const used = new Set();
     const keyword = s(raw.niche_keyword, 40);
-    const heroPromise = findPhoto([withKeyword(s(raw.hero_query, 60), keyword), keyword], 'landscape', used);
-    const galleryPromises = list.map(p =>
-      findPhotos([withKeyword(s(p.image_query, 60), keyword) + ' product photo', withKeyword(s(p.image_query, 60), keyword), keyword], 'square', used, 4)
-    );
-    const [heroImage, ...galleries] = await Promise.all([heroPromise, ...galleryPromises]);
+    let products = [];
+    let usedRealSupplier = false;
 
-    const products = list.map((p, i) => {
-      const price = Math.max(1, Number(p.price) || 19.9);
-      const compare = Number(p.compare_price);
-      const gallery = galleries[i] || [];
-      return {
-        name: s(p.name, 90),
-        price,
-        comparePrice: compare > price ? compare : 0,
-        category: s(p.category, 40) || 'Boutique',
-        description: s(p.description, 500),
-        features: (Array.isArray(p.features) ? p.features : []).map(f => s(f, 80)).filter(Boolean).slice(0, 4),
-        rating: Math.round((4.4 + ((i * 7) % 6) / 10) * 10) / 10,   // exemples d'affichage, pas de vrais avis
-        reviews: 24 + (i * 67) % 380,
-        badge: ['Best-seller', 'Nouveau', 'Promo'].includes(p.badge) ? p.badge : '',
-        image: gallery[0] || '',
-        images: gallery,
-        emoji: s(p.emoji, 4) || '🛍️'
-      };
-    });
+    // 1) Mode "vrais produits" : si CJ_API_KEY est configurée, on essaie de sourcer
+    //    de vrais articles réels chez CJ Dropshipping (nom, photo et prix fournisseur réels).
+    if (process.env.CJ_API_KEY) {
+      try {
+        const cjList = await searchCJProducts(keyword || niche, 8);
+        if (cjList.length >= 3) {
+          const copy = await askClaudeCopyForRealProducts(niche, style, cjList);
+          products = cjList.map((p, i) => {
+            const c = copy[i] || {};
+            const cost = p.sellPrice;
+            // Marge : ~2.4x le prix fournisseur, arrondi à ,90 — à ajuster selon ta marge voulue.
+            const price = Math.max(cost + 1, Math.round(cost * 2.4) - 0.1);
+            return {
+              name: p.name,
+              price: Math.round(price * 100) / 100,
+              comparePrice: 0,
+              category: s(c.category, 40) || 'Boutique',
+              description: s(c.description, 500),
+              features: (Array.isArray(c.features) ? c.features : []).map(f => s(f, 80)).filter(Boolean).slice(0, 4),
+              rating: Math.round((4.4 + ((i * 7) % 6) / 10) * 10) / 10,
+              reviews: 24 + (i * 67) % 380,
+              badge: ['Best-seller', 'Nouveau', 'Promo'].includes(c.badge) ? c.badge : '',
+              image: p.image,
+              images: p.images,
+              emoji: s(c.emoji, 4) || '🛍️',
+              supplierPid: p.pid   // à retrouver dans "My CJ" pour commander/vérifier l'article
+            };
+          });
+          usedRealSupplier = true;
+        }
+      } catch (e) {
+        console.error('CJ sourcing error (repli sur le mode précédent):', e && e.message);
+      }
+    }
+
+    // 2) Repli : pas de CJ_API_KEY, ou CJ a échoué, ou pas assez de résultats pour cette niche
+    //    → on garde l'ancien mode (Claude invente les produits + photos Pexels/Pixabay).
+    let heroImage = '';
+    if (!usedRealSupplier) {
+      const list = (Array.isArray(raw.products) ? raw.products : []).filter(p => p && p.name).slice(0, 8);
+      if (list.length < 3) throw new Error('Pas assez de produits');
+      const used = new Set();
+      const heroPromise = findPhoto([withKeyword(s(raw.hero_query, 60), keyword), keyword], 'landscape', used);
+      const galleryPromises = list.map(p =>
+        findPhotos([withKeyword(s(p.image_query, 60), keyword) + ' product photo', withKeyword(s(p.image_query, 60), keyword), keyword], 'square', used, 4)
+      );
+      const [hero, ...galleries] = await Promise.all([heroPromise, ...galleryPromises]);
+      heroImage = hero;
+      products = list.map((p, i) => {
+        const price = Math.max(1, Number(p.price) || 19.9);
+        const compare = Number(p.compare_price);
+        const gallery = galleries[i] || [];
+        return {
+          name: s(p.name, 90),
+          price,
+          comparePrice: compare > price ? compare : 0,
+          category: s(p.category, 40) || 'Boutique',
+          description: s(p.description, 500),
+          features: (Array.isArray(p.features) ? p.features : []).map(f => s(f, 80)).filter(Boolean).slice(0, 4),
+          rating: Math.round((4.4 + ((i * 7) % 6) / 10) * 10) / 10,
+          reviews: 24 + (i * 67) % 380,
+          badge: ['Best-seller', 'Nouveau', 'Promo'].includes(p.badge) ? p.badge : '',
+          image: gallery[0] || '',
+          images: gallery,
+          emoji: s(p.emoji, 4) || '🛍️'
+        };
+      });
+    } else {
+      // Bannière : on prend la photo du produit vedette CJ, à défaut Pexels/Pixabay.
+      heroImage = products[0] && products[0].image
+        ? products[0].image
+        : await findPhoto([withKeyword(s(raw.hero_query, 60), keyword), keyword], 'landscape', new Set());
+    }
 
     return res.status(200).json({
       name: s(raw.name, 60),
@@ -238,6 +368,7 @@ module.exports = async function handler(req, res) {
       heroSubtitle: s(raw.heroSubtitle, 200),
       heroImage,
       products,
+      realSupplier: usedRealSupplier,
       testimonials: Array.isArray(raw.testimonials) ? raw.testimonials.slice(0, 3) : [],
       trustPoints: Array.isArray(raw.trustPoints) ? raw.trustPoints.slice(0, 3) : []
     });
