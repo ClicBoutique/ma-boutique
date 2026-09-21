@@ -1395,6 +1395,31 @@ if (D.opts.testi) {
     chatBody.scrollTop = chatBody.scrollHeight;
   }
 
+  // Comme addMsg, mais accepte du HTML de confiance (liens cliquables).
+  // N'appeler qu'avec du contenu qu'on construit nous-mêmes (jamais du texte saisi par l'utilisateur non échappé).
+  function addMsgHTML(html, who){
+    const d = document.createElement('div');
+    d.className = 'msg ' + who;
+    d.innerHTML = html;
+    chatBody.appendChild(d);
+    chatBody.scrollTop = chatBody.scrollHeight;
+  }
+
+  // Après l'export, propose pour chaque produit des liens de recherche vers des fournisseurs
+  // dropshipping réels, pour que l'utilisateur puisse trouver le vrai article et l'acheter/le lister.
+  function supplierListHTML(shop){
+    const items = shop.products.map(p => {
+      const q = encodeURIComponent(p.name);
+      return '<li style="margin-bottom:6px;"><strong>' + escHtml(p.name) + '</strong><br>' +
+        '<a href="https://www.aliexpress.com/wholesale?SearchText=' + q + '" target="_blank" rel="noopener">Chercher sur AliExpress</a>' +
+        ' · <a href="https://www.google.com/search?tbm=shop&q=' + q + '" target="_blank" rel="noopener">Chercher sur Google Shopping</a>' +
+        '</li>';
+    }).join('');
+    return '<p><strong>Fournisseurs à contacter pour tes ' + shop.products.length + ' produits :</strong></p>' +
+      '<ul style="padding-left:18px;margin:6px 0;">' + items + '</ul>' +
+      '<p style="margin-top:6px;font-size:0.85rem;color:var(--muted, #6b7280);">Compare les prix et les délais de livraison avant de choisir un fournisseur. Pense aussi à CJ Dropshipping, qui se connecte directement à Shopify.</p>';
+  }
+
   // (Re)dessine la vitrine dans l'iframe isolé
   function renderFrame(){
     if (!state.shop) return;
@@ -1647,6 +1672,7 @@ if (D.opts.testi) {
     spendCredits(5);
     download('boutique-' + (slug(state.shop.name) || 'shopify') + '-produits.csv', shopifyCSV(state.shop), 'text/csv;charset=utf-8');
     addMsg("Export terminé ✅ Le fichier CSV vient d'être téléchargé. Dans Shopify : Produits → Importer, puis choisis ce fichier. Les produits arrivent en brouillon pour que tu les vérifies avant de les publier.", 'ai');
+    addMsgHTML(supplierListHTML(state.shop), 'ai');
   });
 
   // ---- Étape 4 : paiement (crédits) ----
