@@ -12,6 +12,6 @@ module.exports=async function(req,res){
   const r=await withTimeout('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01','content-type':'application/json'},body:JSON.stringify({model:MODEL,max_tokens:1500,system:'Réponds uniquement avec JSON valide. Modifie une boutique mono-produit sans inventer de faits.',messages:[{role:'user',content:`Boutique: ${JSON.stringify(shop)}\nDemande: ${instruction}\nRetourne toute la boutique en JSON.`}]} )});
   const raw=await r.text();if(!r.ok)throw Error(`Anthropic HTTP ${r.status}`);
   const d=JSON.parse(raw),text=(d.content||[]).filter(x=>x.type==='text').map(x=>x.text).join(''),a=text.indexOf('{'),b=text.lastIndexOf('}');
-  if(a<0||b<=a)throw Error('JSON IA invalide');const out=JSON.parse(text.slice(a,b+1));out.product=out.product||shop.product;out.product.images=shop.product.images;out.product.image=shop.product.image;out.theme=out.theme||shop.theme;return res.status(200).json({shop:out,reply:'Modification appliquée.'});
+  if(a<0||b<=a)throw Error('JSON IA invalide');const out=JSON.parse(text.slice(a,b+1));out.product=out.product||shop.product;out.product.images=shop.product.images;out.product.image=shop.product.image;out.productUrl=shop.productUrl||out.productUrl;out.theme=out.theme||shop.theme;return res.status(200).json({shop:out,reply:'Modification appliquée.'});
  }catch(e){return res.status(200).json({shop,reply:'La modification n’a pas pu être appliquée pour le moment.'});}
 };

@@ -56,7 +56,7 @@ function extractImages(html,base){
   for(const m of h.matchAll(/<(?:img|source)[^>]+>/gi)){
     const tag=m[0];
     for(const attr of ['src','data-src','data-original','data-lazy-src']){
-      const v=(tag.match(new RegExp(attr+'=["\\']([^"\\']+)["\\']','i'))||[])[1];
+      const v=(tag.match(new RegExp(attr+"=[\"']([^\"']+)[\"']","i"))||[])[1];
       if(v) add(v);
     }
     const ss=(tag.match(/srcset=["']([^"']+)["']/i)||[])[1];
@@ -66,7 +66,7 @@ function extractImages(html,base){
   // AliExpress embedded state commonly contains imagePathList/imageUrlList/skuImages.
   const keys=['imagePathList','imageUrlList','skuImages','images','imageList','galleryImages'];
   for(const key of keys){
-    const re=new RegExp('["\\']'+key+'["\\']\\s*:\\s*\\[([\\s\\S]{0,20000}?)\\]','gi');
+    const re=new RegExp("[\"']"+key+"[\"']\\s*:\\s*\\[([\\s\\S]{0,20000}?)\\]","gi");
     for(const m of h.matchAll(re)){
       for(const u of m[1].matchAll(/["']([^"']{25,800})["']/g)) add(u[1]);
     }
@@ -92,9 +92,10 @@ function fallback(page,style,url){
  description:'Découvrez ce produit dans une boutique dédiée, conçue pour mettre en valeur ses photos et ses informations essentielles.',
  features:[{title:'Présentation claire',text:'Toutes les informations essentielles au même endroit'},{title:'Galerie produit',text:'Les photos disponibles de la fiche produit'},{title:'Achat simple',text:'Un parcours direct vers le produit'}],
  reviews:[],images:proxyImages(page.images||[]),image:proxyImages(page.images||[])[0]||''},
- trust:[{title:'Présentation claire',text:'Toutes les informations essentielles au même endroit'},{title:'Galerie produit',text:'Les photos accessibles de la fiche produit'},{title:'Achat simple',text:'Un parcours direct vers le produit'}]};
+ trust:[{title:'Présentation claire',text:'Toutes les informations essentielles au même endroit'},{title:'Galerie produit',text:'Les photos accessibles de la fiche produit'},{title:'Achat simple',text:'Un parcours direct vers le produit'}],productUrl:url};
 }
 module.exports=async function(req,res){
+ try{
  res.setHeader('Content-Type','application/json; charset=utf-8');
  res.setHeader('Cache-Control','no-store');
  if(req.method==='OPTIONS')return res.status(204).end();
@@ -109,7 +110,7 @@ module.exports=async function(req,res){
    const r=await withTimeout(productUrl,{headers:{
      'user-agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36',
      'accept-language':'fr-FR,fr;q=0.9,en;q=0.8','accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-   }},12000);
+   }},8000);
    if(r.ok){
      const html=await r.text();
      const title=(html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i)||html.match(/<title[^>]*>([^<]+)/i)||[])[1]||'';
@@ -137,9 +138,15 @@ Style: ${style}. Un seul produit. N'invente ni marque, certification, garantie, 
    const all=[...originalImages,...(Array.isArray(shop.product.images)?shop.product.images:[])].filter((x,i,a)=>x&&a.indexOf(x)===i).slice(0,40);
    shop.product.images=proxyImages(all);
    shop.product.image=shop.product.images[0]||'';
+   shop.productUrl=productUrl;
    return res.status(200).json({shop,source:{imageCount:all.length}});
  }catch(err){
+   console.error('ClicBoutique generate error:', err?.stack || err?.message || err);
    const shop=fallback(page,style,productUrl);
    return res.status(200).json({shop,warning:'La rédaction IA n’a pas pu être terminée ; la boutique a été générée avec les informations récupérées.',source:{imageCount:page.images.length}});
+ }
+ }catch(err){
+  console.error('ClicBoutique generate fatal:', err?.stack || err?.message || err);
+  if(!res.headersSent) return res.status(500).json({error:'Erreur serveur pendant la génération.',detail:process.env.NODE_ENV==='development' ? String(err?.message||err) : undefined});
  }
 };
