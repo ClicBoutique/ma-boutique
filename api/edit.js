@@ -33,7 +33,6 @@ Opérations possibles (« ops ») :
 - {"op":"banner","value":true|false}                          bandeau promo en haut (le texte se change avec field promoText)
 - {"op":"testimonials","value":true|false}                    section avis clients
 - {"op":"product_update","index":0,"fields":{"name","price","comparePrice","category","description","features":[...],"badge","emoji"}}
-- {"op":"product_add","product":{"name","price","category","description","features":[3 points],"badge","emoji","image_query"}}
 - {"op":"product_remove","index":2}
 - {"op":"image","target":"hero" ou un numéro de produit,"query":"requête photo en anglais, 2 à 4 mots, le nom exact de l'objet"}
 
@@ -42,7 +41,7 @@ Règles :
 - Les numéros de produits (index) sont ceux de la liste fournie, avant toute modification. Ne les décale pas.
 - Prix en euros (nombre). Textes en français, sauf si la personne demande une autre langue.
 - Pour changer une couleur, choisis un code hexadécimal précis et lisible (ex : rouge → #d62828, bleu marine → #0b2545).
-- Un produit ajouté doit être réaliste et cohérent avec la boutique, avec un « image_query » précis.
+- La boutique est dédiée à un seul produit : ne crée jamais un second produit.
 - Pas de marque existante, de label ou de certification, ni de promesse de santé inventés.
 - Maximum 14 opérations.
 - Si la demande est impossible ici (paiement, nom de domaine, livraison réelle, ajouter une page, envoyer une image depuis l'ordinateur, code…), mets "ops": [] et explique en une phrase ce que tu peux faire à la place.
@@ -141,12 +140,6 @@ module.exports = async function handler(req, res) {
         const url = await findPhoto(s(o.query, 60), o.target === 'hero' ? 'landscape' : 'square');
         if (!url) { missingPhoto = true; return null; }
         return { op: 'image', target: o.target, url };
-      }
-      if (o.op === 'product_add' && o.product) {
-        const url = await findPhoto(s(o.product.image_query, 60) || s(o.product.name, 60), 'square');
-        if (!url && o.product.image_query) missingPhoto = true;
-        const { image_query, ...product } = o.product;
-        return { op: 'product_add', product: { ...product, image: url } };
       }
       return o;
     }));
