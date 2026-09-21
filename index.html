@@ -898,6 +898,7 @@
         reviews: Math.max(0, Math.round(num(p.reviews, 0))),
         badge: str(p.badge, 14),
         image: url(p.image),
+        images: Array.isArray(p.images) ? p.images.map(url).filter(Boolean).slice(0, 4) : [],
         emoji: str(p.emoji, 4) || '🛍️'
       };
     });
@@ -1031,11 +1032,13 @@ body[data-layout=stacked] .hero-img{order:2;aspect-ratio:21/9;max-height:420px}
 .step h3{font-size:1.02rem;margin-bottom:6px}
 .step p{margin:0;color:var(--muted);font-size:.86rem}
 
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:30px 26px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;display:flex;flex-direction:column;opacity:0;transition:opacity .55s ease,box-shadow .3s ease,border-color .3s ease}
 .card.show{opacity:1}
 .card:hover{box-shadow:0 22px 38px -20px rgba(0,0,0,.28);border-color:color-mix(in srgb, var(--accent) 40%, var(--line))}
-.card .ph{aspect-ratio:1/1;cursor:pointer}
+.card .ph{aspect-ratio:4/5;cursor:pointer}
+.gcount{position:absolute;bottom:10px;right:10px;z-index:2;background:rgba(17,24,39,.68);color:#fff;font-size:.68rem;font-weight:700;padding:3px 8px;border-radius:999px;display:flex;align-items:center;gap:4px}
+@media(min-width:760px){.grid .card:nth-child(3n+2){margin-top:38px}.grid .card:nth-child(3n+3){margin-top:14px}}
 .card .ph img{transition:transform .5s ease}
 .card:hover .ph img{transform:scale(1.07)}
 .badge{position:absolute;top:12px;left:12px;z-index:2;background:var(--accent);color:var(--accent-fg);font-size:.68rem;font-weight:700;padding:4px 10px;border-radius:999px}
@@ -1066,13 +1069,19 @@ footer a{display:block;padding:3px 0;cursor:pointer}footer a:hover{color:var(--f
 
 .modal{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
 .sheet{background:var(--bg);color:var(--fg);border-radius:20px;max-width:760px;width:100%;max-height:100%;overflow:auto;display:grid;grid-template-columns:1fr 1fr;position:relative;box-shadow:0 30px 70px rgba(0,0,0,.35)}
-.sheet .ph{aspect-ratio:1/1}.sheet-body{padding:26px;display:flex;flex-direction:column;gap:11px}
+.gallery{position:relative}
+.sheet .ph{aspect-ratio:4/5}.sheet-body{padding:26px;display:flex;flex-direction:column;gap:11px}
+.gnav{position:absolute;top:50%;transform:translateY(-50%);z-index:3;width:36px;height:36px;border-radius:50%;border:0;background:rgba(255,255,255,.92);color:#111827;font-size:1.15rem;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,.22)}
+.gnav.prev{left:12px}.gnav.next{right:12px}
+.gdots{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);z-index:3;display:flex;gap:6px}
+.gdots span{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.55);cursor:pointer}
+.gdots span.on{background:#fff;width:16px;border-radius:4px}
 .sheet p{margin:0;color:var(--muted);font-size:.88rem}.sheet ul{margin:0;padding-left:18px;color:var(--muted);font-size:.85rem}
 .x{position:absolute;top:12px;right:12px;z-index:3;width:34px;height:34px;border-radius:50%;border:0;background:var(--bg);color:var(--fg);font-size:1rem;box-shadow:0 2px 8px rgba(0,0,0,.2)}
 .toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,20px);background:var(--fg);color:var(--bg);padding:11px 18px;border-radius:999px;font-size:.82rem;font-weight:600;opacity:0;pointer-events:none;transition:.25s;z-index:60;white-space:nowrap}
 .toast.on{opacity:1;transform:translate(-50%,0)}
 @media(max-width:760px){.story-in{grid-template-columns:1fr}.story-visual{aspect-ratio:16/9}}
-@media(max-width:560px){.hero{grid-template-columns:1fr;padding:36px 18px 40px}.hero-img{order:-1}nav{display:none}.block{padding:40px 18px}.story{margin:0 12px;padding:40px 6px}.story-in{padding:0 16px}.newsletter{margin:0 12px 40px;padding:36px 18px}footer{grid-template-columns:1fr 1fr}footer>div:first-child{grid-column:1/-1}.sheet{grid-template-columns:1fr}.sheet .ph{aspect-ratio:2/1}.sheet-body{padding:20px}}
+@media(max-width:560px){.hero{grid-template-columns:1fr;padding:36px 18px 40px}.hero-img{order:-1}nav{display:none}.block{padding:40px 18px}.story{margin:0 12px;padding:40px 6px}.story-in{padding:0 16px}.newsletter{margin:0 12px 40px;padding:36px 18px}footer{grid-template-columns:1fr 1fr}footer>div:first-child{grid-column:1/-1}.sheet{grid-template-columns:1fr}.sheet .ph{aspect-ratio:5/4}.sheet-body{padding:20px}}
 </style></head><body data-layout="__LAYOUT__">
 <div class="promo" id="promo"></div>
 <header>
@@ -1216,14 +1225,22 @@ var count = 0, toastTimer;
 function toast(t){ var e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(function(){ e.classList.remove('on'); }, 1800); }
 function addCart(p){ count++; $('cartCount').textContent = count; toast(p.name + ' ajouté au panier'); }
 
+function productImages(p){
+  var list = Array.isArray(p.images) ? p.images.filter(Boolean) : [];
+  if (!list.length && p.image) list = [p.image];
+  return list;
+}
+
 function renderGrid(){
   var g = $('grid'); g.textContent = '';
   var shown = [];
   D.products.forEach(function(p, i){
     if (cat !== 'Tous' && p.category !== cat) return;
+    var imgs = productImages(p);
     var card = el('article', 'card'), ph = el('div', 'ph');
-    media(ph, p.image, p.emoji, i);
+    media(ph, imgs[0] || '', p.emoji, i);
     if (p.badge) ph.appendChild(el('span', 'badge', p.badge));
+    if (imgs.length > 1) ph.appendChild(el('span', 'gcount', '📷 ' + imgs.length));
     ph.onclick = function(){ openModal(i); };
     var body = el('div', 'card-body'), h = el('h3', null, p.name); h.onclick = ph.onclick;
     var add = el('button', 'add', 'Ajouter au panier'); add.type = 'button'; add.onclick = function(){ addCart(p); };
@@ -1238,15 +1255,35 @@ renderGrid();
 
 function openModal(i){
   var p = D.products[i], sh = $('sheet'); sh.textContent = '';
+  var imgs = productImages(p);
   var x = el('button', 'x', '✕'); x.type = 'button'; x.onclick = closeModal;
-  var ph = el('div', 'ph'); media(ph, p.image, p.emoji, i);
+  var gallery = el('div', 'gallery');
+  var ph = el('div', 'ph'); media(ph, imgs[0] || '', p.emoji, i);
+  gallery.appendChild(ph);
+  if (imgs.length > 1) {
+    var gi = 0;
+    var prev = el('button', 'gnav prev', '‹'); prev.type = 'button';
+    var next = el('button', 'gnav next', '›'); next.type = 'button';
+    var dots = el('div', 'gdots');
+    imgs.forEach(function(_, di){ dots.appendChild(el('span', di === 0 ? 'on' : null)); });
+    function show(idx){
+      gi = (idx + imgs.length) % imgs.length;
+      ph.textContent = '';
+      media(ph, imgs[gi], p.emoji, i);
+      [].forEach.call(dots.children, function(d, di){ d.classList.toggle('on', di === gi); });
+    }
+    prev.onclick = function(){ show(gi - 1); };
+    next.onclick = function(){ show(gi + 1); };
+    [].forEach.call(dots.children, function(d, di){ d.onclick = function(){ show(di); }; });
+    gallery.appendChild(prev); gallery.appendChild(next); gallery.appendChild(dots);
+  }
   var b = el('div', 'sheet-body');
   b.appendChild(el('span', 'rate', p.category)); b.appendChild(el('h3', null, p.name));
   b.appendChild(rating(p)); b.appendChild(priceEl(p)); b.appendChild(el('p', null, p.description));
   if (p.features.length) { var ul = el('ul'); p.features.forEach(function(f){ ul.appendChild(el('li', null, f)); }); b.appendChild(ul); }
   var add = el('button', 'btn', 'Ajouter au panier'); add.type = 'button'; add.onclick = function(){ addCart(p); closeModal(); };
   b.appendChild(add);
-  sh.appendChild(x); sh.appendChild(ph); sh.appendChild(b); $('modal').hidden = false;
+  sh.appendChild(x); sh.appendChild(gallery); sh.appendChild(b); $('modal').hidden = false;
   try { parent.postMessage('cb-open', '*'); } catch (e) {}
 }
 function closeModal(){ $('modal').hidden = true; }
@@ -1501,7 +1538,7 @@ if (D.opts.testi) {
           const u = cleanUrl(o.url);
           if (!u) break;
           if (o.target === 'hero') { shop.heroImage = u; n++; }
-          else if (Number.isInteger(o.target) && shop.products[o.target]) { shop.products[o.target].image = u; n++; }
+          else if (Number.isInteger(o.target) && shop.products[o.target]) { shop.products[o.target].image = u; shop.products[o.target].images = [u]; n++; }
           break;
         }
       }
