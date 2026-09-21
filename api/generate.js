@@ -196,7 +196,7 @@ async function getCJAccessToken() {
   const r = await withTimeout(CJ_BASE + '/authentication/getAccessToken', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ apiKey: process.env.CJ_API_KEY })
+     body: JSON.stringify({ email: process.env.CJ_EMAIL, apiKey: process.env.CJ_API_KEY })
   }, CJ_TIMEOUT_MS);
   const j = await r.json().catch(() => null);
   if (!r.ok || !j || !j.result || !j.data || !j.data.accessToken) {
