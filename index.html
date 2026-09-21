@@ -923,6 +923,8 @@
       heroEmoji: products[0].emoji,
       categories: [...new Set(products.map(p => p.category))].slice(0, 5),
       products,
+      realSupplier: d.realSupplier === true,
+      sourcingNote: str(d.sourcingNote, 300),
       testimonials: testimonials.length ? testimonials : DEFAULT_TESTI,
       trustPoints: trust.length ? trust : DEFAULT_TRUST
     };
@@ -1472,6 +1474,11 @@ if (D.opts.testi) {
     renderFrame();
     chatBody.textContent = '';
     addMsg('Salut ! Ta boutique « ' + state.shop.name + ' » est générée : ' + state.shop.products.length + ' produits, avec descriptions et prix. Dis-moi ce que tu veux changer : couleurs, textes, produits, prix, photos, bannière… je m\'en occupe.', 'ai');
+    if (state.shop.realSupplier) {
+      addMsg('✅ Produits réels sourcés chez CJ Dropshipping (vrais noms, vraies photos, vrai prix fournisseur).', 'ai');
+    } else {
+      addMsg('⚠️ Mode démo : les produits et les photos sont générés par l\'IA (pas de vrai fournisseur pour cette génération). ' + (state.shop.sourcingNote || ''), 'ai');
+    }
   }
 
   function refreshCredits(){ creditCount.textContent = state.credits; }
