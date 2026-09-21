@@ -36,7 +36,8 @@ Schéma exact :
   "about": "présentation de la boutique, 2 phrases",
   "heroTitle": "titre accrocheur de 4 à 8 mots",
   "heroSubtitle": "1 phrase de 12 à 20 mots",
-  "hero_query": "requête photo en anglais, 3-5 mots, ambiance/lifestyle liée à la niche",
+  "niche_keyword": "le produit principal de la niche, en anglais, 1 à 3 mots (ex : « shin guards », « wooden lamp », « dog harness »)",
+  "hero_query": "requête photo en anglais, 3-5 mots : le produit principal en situation (doit contenir niche_keyword)",
   "products": [
     {
       "name": "nom de produit précis et réaliste (jamais « Produit 1 »)",
@@ -47,7 +48,7 @@ Schéma exact :
       "features": ["3 points forts courts et factuels"],
       "badge": "Best-seller | Nouveau | Promo | vide",
       "emoji": "1 emoji",
-      "image_query": "requête photo en anglais, 2-4 mots, objet concret et photographiable (ex: « gold ring jewelry », « yoga mat »)"
+      "image_query": "requête photo en anglais, 2-4 mots : le nom EXACT de l'objet tel qu'on le photographierait (ex : « football shin guards », « gold ring », « yoga mat »)"
     }
   ],
   "testimonials": [{ "author": "Prénom + initiale", "rating": 5, "text": "avis crédible de 1-2 phrases" }],
@@ -56,6 +57,8 @@ Schéma exact :
 
 Règles :
 - Exactement 8 produits, répartis en 2 ou 3 catégories.
+- TOUS les produits doivent appartenir directement à la niche demandée (ex. niche « protège tibia » : protège-tibias, chaussettes de maintien, sac de sport…), jamais un produit sans rapport.
+- Chaque image_query désigne l'objet lui-même (jamais un mot abstrait comme « protection », « sport » ou « quality ») et contient toujours le mot-clé de la niche ou le nom exact du produit.
 - Prix réalistes en euros pour la niche ; « compare_price » = ancien prix barré (supérieur au prix) pour 2 produits maximum, sinon 0.
 - Exactement 3 testimonials et 3 trustPoints.
 - N'utilise AUCUNE marque existante, ni certification ou label (bio, CE, etc.), ni allégation de santé ou médicale.
@@ -96,32 +99,45 @@ async function askClaude(niche, style) {
   return extractJson(text);
 }
 
-// Renvoie une URL de vraie photo (Pexels, sinon Pixabay), en évitant de réutiliser deux fois la même
-async function findPhoto(query, orientation, used) {
-  if (!query) return '';
-  try {
-    let candidates = [];
-    if (process.env.PEXELS_API_KEY) {
-      const url = 'https://api.pexels.com/v1/search?per_page=5&orientation=' + orientation + '&query=' + encodeURIComponent(query);
-      const r = await withTimeout(url, { headers: { Authorization: process.env.PEXELS_API_KEY } }, PEXELS_TIMEOUT_MS);
-      if (!r.ok) return '';
-      const j = await r.json();
-      candidates = (j.photos || []).map(p => p.src && p.src.large);
-    } else if (process.env.PIXABAY_API_KEY) {
-      const url = 'https://pixabay.com/api/?key=' + encodeURIComponent(process.env.PIXABAY_API_KEY) +
-        '&image_type=photo&safesearch=true&per_page=5&orientation=' + (orientation === 'landscape' ? 'horizontal' : 'all') +
-        '&q=' + encodeURIComponent(query);
-      const r = await withTimeout(url, {}, PEXELS_TIMEOUT_MS);
-      if (!r.ok) return '';
-      const j = await r.json();
-      candidates = (j.hits || []).map(h => orientation === 'landscape' ? h.largeImageURL : h.webformatURL);
-    } else {
-      return '';
-    }
-    const pick = candidates.find(u => u && !used.has(u));
-    if (pick) used.add(pick);
-    return pick || '';
-  } catch (e) { return ''; }
+// Cherche des photos (Pexels, sinon Pixabay) pour UNE requête
+async function searchPhotos(query, orientation) {
+  if (process.env.PEXELS_API_KEY) {
+    const url = 'https://api.pexels.com/v1/search?per_page=10&orientation=' + orientation + '&query=' + encodeURIComponent(query);
+    const r = await withTimeout(url, { headers: { Authorization: process.env.PEXELS_API_KEY } }, PEXELS_TIMEOUT_MS);
+    if (!r.ok) return [];
+    const j = await r.json();
+    return (j.photos || []).map(p => p.src && p.src.large);
+  }
+  if (process.env.PIXABAY_API_KEY) {
+    const url = 'https://pixabay.com/api/?key=' + encodeURIComponent(process.env.PIXABAY_API_KEY) +
+      '&image_type=photo&safesearch=true&per_page=10&orientation=' + (orientation === 'landscape' ? 'horizontal' : 'all') +
+      '&q=' + encodeURIComponent(query);
+    const r = await withTimeout(url, {}, PEXELS_TIMEOUT_MS);
+    if (!r.ok) return [];
+    const j = await r.json();
+    return (j.hits || []).map(h => orientation === 'landscape' ? h.largeImageURL : h.webformatURL);
+  }
+  return [];
+}
+
+// Essaie plusieurs requêtes de la plus précise à la plus générale, sans réutiliser deux fois la même photo
+async function findPhoto(queries, orientation, used) {
+  for (const q of queries.filter(Boolean)) {
+    try {
+      const pick = (await searchPhotos(q, orientation)).find(u => u && !used.has(u));
+      if (pick) { used.add(pick); return pick; }
+    } catch (e) { /* on essaie la requête suivante */ }
+  }
+  return '';
+}
+
+// Garantit que la requête contient le mot-clé de la niche (évite les photos sans rapport)
+function withKeyword(query, keyword) {
+  const q = (query || '').trim();
+  if (!keyword) return q;
+  const words = keyword.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  const has = words.some(w => q.toLowerCase().includes(w));
+  return has ? q : (keyword + ' ' + q).trim();
 }
 
 const s = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
@@ -151,9 +167,10 @@ module.exports = async function handler(req, res) {
 
     // Photos en parallèle : 1 pour la bannière + 1 par produit
     const used = new Set();
+    const keyword = s(raw.niche_keyword, 40);
     const [heroImage, ...images] = await Promise.all([
-      findPhoto(s(raw.hero_query, 60) || niche, 'landscape', used),
-      ...list.map(p => findPhoto(s(p.image_query, 60) || s(p.name, 60), 'square', used))
+      findPhoto([withKeyword(s(raw.hero_query, 60), keyword), keyword], 'landscape', used),
+      ...list.map(p => findPhoto([withKeyword(s(p.image_query, 60), keyword), keyword], 'square', used))
     ]);
 
     const products = list.map((p, i) => {
