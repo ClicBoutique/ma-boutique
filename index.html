@@ -1000,7 +1000,8 @@ body[data-layout=stacked] .hero-cta,body[data-layout=stacked] .social-proof{just
 body[data-layout=stacked] .hero-img{order:2;aspect-ratio:21/9;max-height:420px}
 
 .strip{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;padding:6px 20px 30px;max-width:1180px;margin:0 auto}
-.strip div{display:flex;gap:10px;align-items:center;background:var(--surface);border-radius:12px;padding:12px 16px;font-size:.8rem;flex:1;min-width:190px}
+.strip div{display:flex;gap:10px;align-items:center;background:var(--surface);border-radius:12px;padding:12px 16px;font-size:.8rem;flex:1;min-width:190px;transition:transform .2s ease,box-shadow .2s ease}
+.strip div:hover{transform:translateY(-3px);box-shadow:0 14px 26px -16px rgba(0,0,0,.25)}
 .strip svg{flex:none;width:22px;height:22px;stroke:var(--accent);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .strip b{display:block;font-size:.85rem}.strip span{color:var(--muted)}
 
@@ -1022,9 +1023,8 @@ body[data-layout=stacked] .hero-img{order:2;aspect-ratio:21/9;max-height:420px}
 .story .philosophy{font-family:var(--serif);font-size:1.25rem;line-height:1.4;margin-bottom:16px}
 .story p.body-text{color:var(--muted);max-width:56ch}
 .story-visual{position:relative;aspect-ratio:5/4;border-radius:22px;overflow:hidden;background:linear-gradient(135deg,color-mix(in srgb, var(--accent) 22%, var(--surface)),color-mix(in srgb, var(--accent) 6%, var(--bg)))}
-.story-visual span{position:absolute;font-size:4.4rem;opacity:.9}
-.story-visual span:nth-child(1){top:14%;left:14%}
-.story-visual span:nth-child(2){bottom:12%;right:16%;font-size:3rem;opacity:.55}
+.story-visual img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;animation:heroIn .8s ease forwards;animation-delay:.1s}
+.story-visual .badge-emoji{position:absolute;bottom:14px;right:14px;font-size:2.2rem;background:#fff;border-radius:16px;padding:10px 14px;box-shadow:0 14px 30px -12px rgba(0,0,0,.35);animation:float 6s ease-in-out infinite}
 
 .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:22px;counter-reset:step}
 .step{position:relative;padding:26px 20px 22px;border:1px solid var(--line);border-radius:18px;background:var(--card)}
@@ -1070,6 +1070,8 @@ footer a{display:block;padding:3px 0;cursor:pointer}footer a:hover{color:var(--f
 .modal{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
 .sheet{background:var(--bg);color:var(--fg);border-radius:20px;max-width:760px;width:100%;max-height:100%;overflow:auto;display:grid;grid-template-columns:1fr 1fr;position:relative;box-shadow:0 30px 70px rgba(0,0,0,.35)}
 .gallery{position:relative}
+.gallery .ph{transition:opacity .18s ease}
+.gallery .ph img{transition:opacity .25s ease}
 .sheet .ph{aspect-ratio:4/5}.sheet-body{padding:26px;display:flex;flex-direction:column;gap:11px}
 .gnav{position:absolute;top:50%;transform:translateY(-50%);z-index:3;width:36px;height:36px;border-radius:50%;border:0;background:rgba(255,255,255,.92);color:#111827;font-size:1.15rem;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,.22)}
 .gnav.prev{left:12px}.gnav.next{right:12px}
@@ -1114,7 +1116,7 @@ footer a{display:block;padding:3px 0;cursor:pointer}footer a:hover{color:var(--f
       <p class="philosophy" id="philosophyText"></p>
       <p class="body-text" id="aboutText"></p>
     </div>
-    <div class="story-visual"><span id="storyEmoji1"></span><span id="storyEmoji2"></span></div>
+    <div class="story-visual" id="storyVisual"><span class="badge-emoji" id="storyEmoji1"></span></div>
   </div>
 </section>
 <section class="block how reveal">
@@ -1180,7 +1182,18 @@ $('heroTitle').textContent = D.heroTitle; $('heroSub').textContent = D.heroSubti
 media($('heroImg'), D.heroImage, D.heroEmoji, 0);
 $('philosophyText').textContent = D.philosophy || D.tagline;
 $('aboutText').textContent = D.about;
-$('storyEmoji1').textContent = D.heroEmoji; $('storyEmoji2').textContent = (D.products[1] || D.products[0]).emoji;
+(function(){
+  var storyProduct = D.products[2] || D.products[1] || D.products[0];
+  var storyPhoto = (storyProduct && (storyProduct.image || (storyProduct.images && storyProduct.images[0]))) || D.heroImage;
+  var sv = $('storyVisual');
+  if (storyPhoto) {
+    var im = new Image(); im.alt = ''; im.loading = 'lazy';
+    im.onerror = function(){ im.remove(); };
+    im.src = storyPhoto;
+    sv.insertBefore(im, sv.firstChild);
+  }
+  $('storyEmoji1').textContent = D.heroEmoji;
+})();
 $('heroSecondary').onclick = function(){ $('apropos').scrollIntoView({behavior:'smooth'}); };
 
 var avgRating = (D.products.reduce(function(s,p){ return s + p.rating; }, 0) / D.products.length) || 4.7;
@@ -1268,8 +1281,12 @@ function openModal(i){
     imgs.forEach(function(_, di){ dots.appendChild(el('span', di === 0 ? 'on' : null)); });
     function show(idx){
       gi = (idx + imgs.length) % imgs.length;
-      ph.textContent = '';
-      media(ph, imgs[gi], p.emoji, i);
+      ph.style.opacity = '0';
+      setTimeout(function(){
+        ph.textContent = '';
+        media(ph, imgs[gi], p.emoji, i);
+        ph.style.opacity = '1';
+      }, 140);
       [].forEach.call(dots.children, function(d, di){ d.classList.toggle('on', di === gi); });
     }
     prev.onclick = function(){ show(gi - 1); };
